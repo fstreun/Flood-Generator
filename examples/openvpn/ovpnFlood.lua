@@ -1,4 +1,4 @@
---- A simple OpenVPN DoS attack
+--- A simple OpenVPN flooding attack script
 local lm = require "libmoon"
 local log = require "log"
 local memory = require "memory"

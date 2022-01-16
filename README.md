@@ -11,3 +11,6 @@ Read and try the our examples to understand how our framework can be used to imp
 ```
 sudo ./path/to/libmoon examples/generic/udpFlood.lua [arguments]
 ```
+
+## Examples
+The examples contain implementations of flooding attacks and scripts to execute them.
