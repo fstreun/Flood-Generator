@@ -45,7 +45,7 @@ function mod.configure_pars(parser)
     parser:flag("--notUpdateTCPChecksum", "Avoid calculation/offloading of TCP checksum.")
 
     -- output options
-    parser:option("-os --outputDevStats", "Write device statistics to file."):args("1")
+    parser:option("--outputDevStats", "Write device statistics to file."):args("1")
     parser:option("--outputPcap", "Write captured packets to file rx_I.pcap (I: dev). Optionally a prefix can be given.")
         :args("?")
 
