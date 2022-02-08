@@ -2,7 +2,7 @@
 
 # sudo script.sh <ipSrc> <ipDst> <attackRate> <duration>
 # e.g.
-# sudo bash ikev2Flood.sh 172.31.116.132 172.31.116.137 1000 10 all_cisco.pcap 1000000 128
+# sudo bash dtlsFlood.sh 172.31.116.132 172.31.116.137 1000 10 dtls_cisco.pcap 1000000 128
 
 # cd to directory of script
 scriptDir=$(dirname -- "$(readlink -f -- "$BASH_SOURCE")")
