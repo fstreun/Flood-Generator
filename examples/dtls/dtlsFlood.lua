@@ -10,6 +10,7 @@ local ip4 = require "proto.ip4"
 local dtls = require "proto.dtls"
 
 local attack = require "attack"
+local fieldModifier = require "fieldModifier"
 
 
 -- the configure function is called on startup with a pre-initialized command line parser
@@ -32,6 +33,9 @@ master = attack.main
 local taskRunning = attack.taskRunning
 local createPkt
 
+local function setDtlsSessionId_0(pkt, val)
+	pkt.dtls_handshake.session_id.uint64[0] = val
+end
 
 function txTask(threadId, queue, args)
 	log:info("Start txTask.")
@@ -48,51 +52,35 @@ function txTask(threadId, queue, args)
 	local pktPrototype, pktLen = createPkt(args, mempool)
 
 	-- only direct field writes are fast enough for high rates
-	local sessionIDCounter = false
-	local sessionIDCounterMax
+	local dtlsSessionIdModifier
 	if args.sessionIDCount and not (args.sessionIDCount == 1) then
-		sessionIDCounter = ffi.cast('uint64_t', 0)
 		if args.sessionIDCount == 0 then
 			-- max uint64_t
-			sessionIDCounterMax = ffi.cast('uint64_t', 0)
-			sessionIDCounterMax = sessionIDCounterMax - 1
+			dtlsSessionIdModifier = fieldModifier.field_inc:new(
+				ffi.cast('uint64_t', 0), ffi.cast('uint64_t', 0) - 1,
+				setDtlsSessionId_0
+			)
 		else
-			sessionIDCounterMax = args.sessionIDCount
+			dtlsSessionIdModifier = fieldModifier.field_inc:new(
+				ffi.cast('uint64_t', 0), args.sessionIDCount,
+				setDtlsSessionId_0
+			)
 		end
 	end
 
-	local srcPortCounter
-	local srcPortCounterMax
+	local udpSrcModifier
 	if args.flows and not (args.flows == 1) then
-		srcPortCounter = 0
-		if args.flows == 0 then
-			-- 65535 is the highest port used
-			srcPortCounterMax = 65535
-		else
-			srcPortCounterMax = args.flows
-		end
+		udpSrcModifier = fieldModifier.field_inc.udpSrc((args.flows))
 	end
 
-	local srcIPCounter
-	local srcIPCounterMax
+	local ipSrcModifier
 	if args.ipFlows and not (args.ipFlows == 1) then
-		srcIPCounter = 0
-		if args.ipFlows == 0 then
-			srcIPCounterMax = 255
-		else
-			srcIPCounterMax = args.ipFlows
-		end
+		ipSrcModifier = fieldModifier.field_inc.ipSrc_3(args.ipFlows)
 	end
 
-	local srcETHCounter
-	local srcETHCounterMax
+	local ethSrcModifier
 	if args.ethFlows and not (args.ethFlows == 1) then
-		srcETHCounter = 0
-		if args.ethFlows == 0 then
-			srcETHCounterMax = 255
-		else
-			srcETHCounterMax = args.ethFlows
-		end
+		ethSrcModifier = fieldModifier.field_inc.ethSrc_5(args.ethFlows)
 	end
 
 	attack.txTask_sync_start(args)
@@ -112,27 +100,20 @@ function txTask(threadId, queue, args)
 
 			sizeSum = sizeSum + buf:getSize()
 
-			if sessionIDCounter then
-				pkt.dtls_handshake.session_id.uint64[0] = (pkt.dtls_handshake.session_id.uint64[0] + sessionIDCounter)
-				sessionIDCounter = (sessionIDCounter + 1) % sessionIDCounterMax
+			if dtlsSessionIdModifier then
+				dtlsSessionIdModifier:set_field(pkt)
 			end
 
-			if srcPortCounter then
-				-- srcPort = given port + counter
-				-- the other parts are to ensure 0 < port <= 65535
-				local srcPort = (pkt.udp:getSrcPort() + srcPortCounter  - 1) % 65535 + 1
-				pkt.udp:setSrcPort(srcPort)
-				srcPortCounter = (srcPortCounter + 1) % srcPortCounterMax
+			if udpSrcModifier then
+				udpSrcModifier:set_field(pkt)
+			end
+			
+			if ipSrcModifier then
+				ipSrcModifier:set_field(pkt)
 			end
 
-			if srcIPCounter then
-				pkt.ip4.src.uint8[3] = (pkt.ip4.src.uint8[3] + srcIPCounter)
-				srcIPCounter = (srcIPCounter + 1) % srcIPCounterMax
-			end
-
-			if srcETHCounter then
-				pkt.eth.src.uint8[5] = (pkt.eth.src.uint8[5] + srcETHCounter)
-				srcETHCounter = (srcETHCounter + 1) % srcETHCounterMax
+			if ethSrcModifier then
+				ethSrcModifier:set_field(pkt)
 			end
 
 			attack.txTask_setChecksumOffloading(buf, args)
