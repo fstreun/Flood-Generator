@@ -10,6 +10,7 @@ local ip4 = require "proto.ip4"
 local ikev2 = require "proto.ikev2"
 
 local attack = require "attack"
+local fieldModifier = require "fieldModifier"
 
 
 -- the configure function is called on startup with a pre-initialized command line parser
@@ -28,10 +29,8 @@ end
 
 master = attack.main
 
-
 local taskRunning = attack.taskRunning
 local createPkt
-
 
 function txTask(threadId, queue, args)
 	log:info("Start txTask.")
@@ -61,38 +60,19 @@ function txTask(threadId, queue, args)
 		end
 	end
 
-	local srcPortCounter
-	local srcPortCounterMax
+	local udpSrcModifier
 	if args.flows and not (args.flows == 1) then
-		srcPortCounter = 0
-		if args.flows == 0 then
-			-- 65535 is the highest port used
-			srcPortCounterMax = 65535
-		else
-			srcPortCounterMax = args.flows
-		end
+		udpSrcModifier = fieldModifier.field_inc.udpSrc((args.flows))
 	end
 
-	local srcIPCounter
-	local srcIPCounterMax
+	local ipSrcModifier
 	if args.ipFlows and not (args.ipFlows == 1) then
-		srcIPCounter = 0
-		if args.ipFlows == 0 then
-			srcIPCounterMax = 255
-		else
-			srcIPCounterMax = args.ipFlows
-		end
+		ipSrcModifier = fieldModifier.field_inc.ipSrc_3(args.ipFlows)
 	end
 
-	local srcETHCounter
-	local srcETHCounterMax
+	local ethSrcModifier
 	if args.ethFlows and not (args.ethFlows == 1) then
-		srcETHCounter = 0
-		if args.ethFlows == 0 then
-			srcETHCounterMax = 255
-		else
-			srcETHCounterMax = args.ethFlows
-		end
+		ethSrcModifier = fieldModifier.field_inc.ethSrc_5(args.ethFlows)
 	end
 
 	attack.txTask_sync_start(args)
@@ -117,22 +97,16 @@ function txTask(threadId, queue, args)
 				initSPICounter = (initSPICounter + 1) % initSPICounterMax
 			end
 
-			if srcPortCounter then
-				-- srcPort = given port + counter
-				-- the other parts are to ensure 0 < port <= 65535
-				local srcPort = (pkt.udp:getSrcPort() + srcPortCounter  - 1) % 65535 + 1
-				pkt.udp:setSrcPort(srcPort)
-				srcPortCounter = (srcPortCounter + 1) % srcPortCounterMax
+			if udpSrcModifier then
+				udpSrcModifier:set_field(pkt)
+			end
+			
+			if ipSrcModifier then
+				ipSrcModifier:set_field(pkt)
 			end
 
-			if srcIPCounter then
-				pkt.ip4.src.uint8[3] = (pkt.ip4.src.uint8[3] + srcIPCounter)
-				srcIPCounter = (srcIPCounter + 1) % srcIPCounterMax
-			end
-
-			if srcETHCounter then
-				pkt.eth.src.uint8[5] = (pkt.eth.src.uint8[5] + srcETHCounter)
-				srcETHCounter = (srcETHCounter + 1) % srcETHCounterMax
+			if ethSrcModifier then
+				ethSrcModifier:set_field(pkt)
 			end
 
 			attack.txTask_setChecksumOffloading(buf, args)

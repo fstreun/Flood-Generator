@@ -6,7 +6,6 @@ local ffi = require "ffi"
 
 local libmoon = require "libmoon"
 
-local ip4 = require "proto.ip4"
 local dtls = require "proto.dtls"
 
 local attack = require "attack"

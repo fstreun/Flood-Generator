@@ -6,6 +6,7 @@ local ffi = require "ffi"
 local libmoon = require "libmoon"
 
 local attack = require "attack"
+local fieldModifier = require "fieldModifier"
 
 local table_utils = require "utils.table_utils"
 
@@ -18,6 +19,7 @@ function configure(parser)
 
 	parser:option("--flows", "Number of flows used in the flood by using different source ports. 0 results in 65535 flows (max port count)."):args(1):convert(tonumber):default(1)
 	parser:option("--ipFlows", "Number of flows used in the flood by using different destination ip."):args(1):convert(tonumber):default(1)
+	parser:option("--ethFlows", "Number of flows used in the flood by using different source ethernet addresses. Max 255"):args(1):convert(tonumber):default(1)
 
 	parser:option("--amount", ""):args(1):convert(tonumber)
 	return parser:parse()
@@ -68,27 +70,19 @@ function txTask(threadId, queue, args)
 	local replayCounter = 0;
 	local replayCounterMax = #packetSchedule
 
-	local srcPortCounter
-	local srcPortCounterMax
+	local udpSrcModifier
 	if args.flows and not (args.flows == 1) then
-		srcPortCounter = 0
-		if args.flows == 0 then
-			-- 65535 is the highest port used
-			srcPortCounterMax = 65535
-		else
-			srcPortCounterMax = args.flows
-		end
+		udpSrcModifier = fieldModifier.field_inc.udpSrc((args.flows))
 	end
 
-	local srcIPCounter
-	local srcIPCounterMax
+	local ipSrcModifier
 	if args.ipFlows and not (args.ipFlows == 1) then
-		srcIPCounter = 0
-		if args.ipFlows == 0 then
-			srcIPCounterMax = 255
-		else
-			srcIPCounterMax = args.ipFlows
-		end
+		ipSrcModifier = fieldModifier.field_inc.ipSrc_3(args.ipFlows)
+	end
+
+	local ethSrcModifier
+	if args.ethFlows and not (args.ethFlows == 1) then
+		ethSrcModifier = fieldModifier.field_inc.ethSrc_5(args.ethFlows)
 	end
 
 	attack.txTask_sync_start(args)
@@ -117,19 +111,16 @@ function txTask(threadId, queue, args)
 
 			replayCounter = (replayCounter + 1) % (replayCounterMax)
 
-			if srcPortCounter then
-				local pkt = buf:getUdpPacket()
-				-- srcPort = given port + counter
-				-- the other parts are to ensure 0 < port <= 65535
-				local srcPort = (pkt.udp:getSrcPort() + srcPortCounter  - 1) % 65535 + 1
-				pkt.udp:setSrcPort(srcPort)
-				srcPortCounter = (srcPortCounter + 1) % srcPortCounterMax
+			if udpSrcModifier then
+				udpSrcModifier:set_field(pkt)
+			end
+			
+			if ipSrcModifier then
+				ipSrcModifier:set_field(pkt)
 			end
 
-			if srcIPCounter then
-				local pkt = buf:getIP4Packet()
-				pkt.ip4.src.uint8[3] = (pkt.ip4.src.uint8[3] + srcIPCounter)
-				srcIPCounter = (srcIPCounter + 1) % srcIPCounterMax
+			if ethSrcModifier then
+				ethSrcModifier:set_field(pkt)
 			end
 
 			attack.txTask_setChecksumOffloading(buf, args)

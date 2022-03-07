@@ -3,9 +3,9 @@ local libmoon = require "libmoon"
 local log = require "log"
 local memory = require "memory"
 local stats = require "stats"
-local arp = require "proto.arp"
 
 local attack = require "attack"
+local fieldModifier = require "fieldModifier"
 
 local ffi = require "ffi"
 
@@ -23,18 +23,12 @@ function configure(parser)
 	return parser:parse()
 end
 
-function master(args)
-	attack.main(args)
-end
+master = attack.main
+local taskRunning = attack.taskRunning
 
 function txTask(threadId, queue, args)
 	log:info("Started txTask.")
 	local PKT_LEN = args.pktLength
-
-	local captureCtr
-	if args.outputTxStats then
-			captureCtr = stats:newPktTxCounter("thread #" .. threadId, "CSV", args.outputTxStats .. threadId .. ".csv")
-	end
 
 	local slowRate = false
 	local lastSent = 0
@@ -42,54 +36,33 @@ function txTask(threadId, queue, args)
 		slowRate = args.queueRate
 	end
 
-	local srcPortCounter
-	local srcPortCounterMax
+	local udpSrcModifier
 	if args.flows and not (args.flows == 1) then
-		srcPortCounter = 0
-		if args.flows == 0 then
-			-- 65535 is the highest port used
-			srcPortCounterMax = 65535
-		else
-			srcPortCounterMax = args.flows
-		end
+		udpSrcModifier = fieldModifier.field_inc.udpSrc((args.flows))
 	end
 
-	local srcIPCounter
-	local srcIPCounterMax
+	local ipSrcModifier
 	if args.ipFlows and not (args.ipFlows == 1) then
-		srcIPCounter = 0
-		if args.ipFlows == 0 then
-			srcIPCounterMax = 255
-		else
-			srcIPCounterMax = args.ipFlows
-		end
+		ipSrcModifier = fieldModifier.field_inc.ipSrc_3(args.ipFlows)
 	end
 
-	local srcETHCounter
-	local srcETHCounterMax
+	local ethSrcModifier
 	if args.ethFlows and not (args.ethFlows == 1) then
-		srcETHCounter = 0
-		if args.ethFlows == 0 then
-			srcETHCounterMax = 255
-		else
-			srcETHCounterMax = args.ethFlows
-		end
+		ethSrcModifier = fieldModifier.field_inc.ethSrc_5(args.ethFlows)
 	end
 
 	local mempool = memory.createMemPool()
 	local bufs = mempool:bufArray()
 
-	local udpPkt = createUDPPkt(args, mempool)
-
-	attack.modifyPkt(udpPkt, args)
+	local udpPkt, pktLen = createUDPPkt(args, mempool)
 
 	attack.txTask_sync_start(args)
 
-	while libmoon.running() do
+	while taskRunning(args) do
 		if slowRate then
-			bufs:allocN(args.pktLength, 1)
+			bufs:allocN(pktLen, 1)
 		else
-			bufs:alloc(args.pktLength)
+			bufs:alloc(pktLen)
 		end
 		local sizeSum = 0
 
@@ -101,28 +74,20 @@ function txTask(threadId, queue, args)
 			ffi.copy(pkt, udpPkt, 42)
 
 			sizeSum = sizeSum + buf:getSize()
+
+			if udpSrcModifier then
+				udpSrcModifier:set_field(pkt)
+			end
 			
-			if srcPortCounter then
-				local srcPort = (pkt.udp:getSrcPort() + srcPortCounter  - 1) % 65535 + 1
-				pkt.udp:setSrcPort(srcPort)
-				srcPortCounter = (srcPortCounter + 1) % srcPortCounterMax
+			if ipSrcModifier then
+				ipSrcModifier:set_field(pkt)
 			end
 
-			if srcIPCounter then
-				pkt.ip4.src.uint8[3] = (pkt.ip4.src.uint8[3] + srcIPCounter)
-				srcIPCounter = (srcIPCounter + 1) % srcIPCounterMax
-			end
-
-			if srcETHCounter then
-				pkt.eth.src.uint8[5] = (pkt.eth.src.uint8[5] + srcETHCounter)
-				srcETHCounter = (srcETHCounter + 1) % srcETHCounterMax
+			if ethSrcModifier then
+				ethSrcModifier:set_field(pkt)
 			end
 
 			attack.txTask_setChecksumOffloading(buf, args)
-
-			if captureCtr then
-				captureCtr:countPacket(buf)
-			end
 		end
 
 		if slowRate then
@@ -136,14 +101,6 @@ function txTask(threadId, queue, args)
 		end
 
 		attack.txTask_send(queue, bufs)
-
-		if captureCtr then
-			captureCtr:update()
-		end
-	end
-	
-	if captureCtr then
-		captureCtr:finalize()
 	end
 
 	log:info("Terminate txTask.")
@@ -153,29 +110,26 @@ rxTask = attack.rxTask
 
 
 function createUDPPkt(args, mempool)
-	local PKT_LEN = args.pktLength
-
-	-- raw packet
-	local res = ffi.new("uint8_t [?]", PKT_LEN)
+	local pktLen = args.pktLength
 
 	local bufArray = mempool:bufArray()
-
-	bufArray:alloc(PKT_LEN, 1)
-
+	bufArray:alloc(pktLen, 1)
 	local buf = bufArray[1]
 	local pkt = buf:getUdpPacket()
 
 	pkt:fill{
 		-- fields not explicitly set here are initialized to reasonable defaults
-		pktLength = args.pktLength
+		pktLength = pktLen
 	}
 
 	attack.modifyPkt(buf, args)
 
+	-- raw packet
+	local res = ffi.new("uint8_t [?]", pktLen)
 	-- similar to pkt:setRawPacket
-	ffi.copy(res, pkt, PKT_LEN)
+	ffi.copy(res, pkt, pktLen)
 
 	bufArray:freeAll()
 
-	return res
+	return res, pktLen
 end

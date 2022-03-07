@@ -39,4 +39,5 @@ $libmoonBuild/libmoon ikev2Flood.lua \
     --ethSrc $ethSrc --ip4Src $ipSrc --udpSrc $udpSrc \
     --ethDst $ethDst --ip4Dst $ipDst --udpDst $udpDst \
     --startConfirmation \
+    --outputDevStats stats.txt \
     0
