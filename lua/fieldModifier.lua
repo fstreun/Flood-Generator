@@ -5,7 +5,7 @@ require "utils" -- incAndWrap
 local mod = {}
 
 function mod.setUdpSrc(pkt, val)
-	pkt.udp:setSrc(val)
+	pkt.udp:setSrcPort(val)
 end
 
 function mod.setIP4Src_3(pkt, val)
