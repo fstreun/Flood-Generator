@@ -45,7 +45,7 @@ wireguard.MSG2_LENGTH = 132	-- length of message up to mac2
 ---------------------------------------------------------------------------
 ---- wireguard utils
 ---------------------------------------------------------------------------
-local wireguard_crypto = ffi.load("../utils/wireguard-crypto")
+local wireguard_crypto = ffi.load("./proto/wireguard-crypto")
 
 ffi.cdef[[
 	int wg_decode_pubkey(uint8_t out[32], const char in_base64[44]);
